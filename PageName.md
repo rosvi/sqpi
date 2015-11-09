@@ -1,0 +1,229 @@
+# Introduction #
+
+Ok, after this little appetizer , here's the beef -
+First, the XML Configuration
+
+
+
+&lt;bean id="mockJobBean" class="org.springframework.scheduling.quartz.JobDetailBean"&gt;
+
+
+> 
+
+&lt;property name="jobClass" value="com.test.MockJobBean"/&gt;
+
+
+> 
+
+&lt;property name="jobDataAsMap"&gt;
+
+
+> > 
+
+&lt;util:map&gt;
+
+
+> > > 
+
+&lt;entry key="filesHandler" value-ref="trifectaFilesHandler"/&gt;
+
+ // I want this to
+> > > > //  be Prototype!!!
+
+> > > ...
+
+> > 
+
+&lt;/util:map&gt;
+
+
+
+> 
+
+&lt;/property&gt;
+
+
+
+
+&lt;/bean&gt;
+
+
+
+> <!-- so I'll define it in the scope, that will do the trick ;^) -->
+
+
+&lt;bean id="trifectaFilesHandler" class="com.project.handlers.TrifectaFilesHandler" scope="prototype"&gt;
+
+
+
+
+&lt;/bean&gt;
+
+
+
+Defined above is a simple Quartz Job Bean.
+
+> As can see, I've explicitly declared the FilesHandler? implementation class to be prototype.
+
+The Quartz Job Bean Class :
+
+public class ZipFilesHandlerJob extends QuartzJobBean implements ApplicationContextAware {
+> private ApplicationContext ctx;
+> private FilesHandler filesHandler;
+> ...
+
+> @Inject
+> > private JobBeansFactory jobBeansFactory;
+
+
+
+> public void setFilesHandler(FilesHandler filesHandler) {
+> > this.filesHandler = filesHandler;
+
+> }
+
+> @Override
+> > protected void executeInternal(JobExecutionContext context) throws JobExecutionException {
+> > > try {
+> > > > Application.injectDependencies(this);
+> > > > jobBeansFactory.setApplicationContext(ctx);
+> > > > jobBeansFactory.injectMembers(this, context.getMergedJobDataMap());
+> > > > switch (stateKeeper.getFailureState().getStatus()) {
+> > > > > case 0:
+> > > > > > log.info("There Was a Failure in Previous Directory Scan");
+> > > > > > filesHandler.init();
+> > > > > > break;
+> > > > > > case 1:
+> > > > > > > ...
+> > > > > > > break;
+> > > > > > > ...
+
+> > > > > > }
+
+> > > > > catch (IOException e) {
+> > > > > > ...
+
+> > > > > } catch (Throwable throwable) {
+> > > > > > ...
+
+> > > > > }
+> > > > > finally {
+> > > > > > ...
+
+> > > > > }
+
+> > > > }
+> > > > catch (SchedulerException e) {
+> > > > > ...
+
+> > > > }
+
+> > > }
+
+
+> public void setApplicationContext(ApplicationContext applicationContext)
+> throws BeansException {
+> > ctx = applicationContext;
+> > }
+}
+
+to override Spring's IOC I've done a couple of things :
+
+1. using Guice to inject a JobFactory? .
+
+3. Setting the ApplicationContext? object to the JobFactory? (passing the ApplicationContext? is vital!)
+
+4. Calling the InjectMembers? from the JobFactory? to inject the desired objects to the job )
+The Job Beans Factory class
+
+@Singleton
+public class JobBeansFactory {
+
+
+> private ApplicationContext applicationContext;
+> > public void injectMembers(Object instance, JobDataMap jobDataMap) {
+> > > Collection
+
+&lt;JobProperty&gt;
+
+ properties = getProperties(instance);
+> > > Map<String, Object> values = getBeans(properties, jobDataMap);
+> > > for (final JobProperty property : properties) {
+> > > > Object value = values.get(property.getName());
+> > > > property.setValue(instance, value);
+
+> > > }
+
+> }
+
+> private Collection
+
+&lt;JobProperty&gt;
+
+ getProperties(Object instance) {
+> > Class<?> type = instance.getClass();
+> > Collection
+
+&lt;JobProperty&gt;
+
+ properties = this.jobProperties.get(type);
+> > if (properties.isEmpty()) {
+> > > for (final Method method : type.getDeclaredMethods()) {
+> > > > if (ObjectNamingUtil.isPropertySetterMethod(method)) {
+> > > > > jobProperties.put(type, new JobProperty(method));
+
+> > > > }
+
+> > > }
+> > > properties = this.jobProperties.get(type);
+
+> > }
+> > return properties;
+
+> }
+
+> ...
+
+Last but not least, the Job Property class
+
+public class JobProperty {
+
+> private final Method setterMethod;
+> private final String name;
+
+> public JobProperty(Method setterMethod) {
+> > this.setterMethod = setterMethod;
+> > name = ObjectNamingUtil.getPropertyName(setterMethod);
+
+> }
+
+> public void setValue(Object jobInstance, Object value) {
+> > try {
+> > > ReflectionUtil.invokeMethod(jobInstance, setterMethod, value);
+
+> > } catch (Throwable throwable) {
+> > > throw new IDISystemException(throwable);
+
+> > }
+
+> }
+
+> public String getName() {
+> > return name;
+
+> }
+}
+
+Some explanations : The ObjectNamingUtil? is a simple naming utility that helps with Beans naming conventions. The ReflectionUtil? is much like Spring's and Apache's ReflectionUtil?.
+
+So the general idea is to use Spring's Injection for 2 things - 1. To inject the ApplicationContext? for us. 2. To inject own defined Beans
+
+It's a simple process of getting the Beans names - some from the Definitions in the XML and others from their Runtime Name, then getting the beans using the Injected ApplicationContext? to retrieve the defined instances of the beans.
+
+
+# Details #
+
+Add your content here.  Format your content with:
+  * Text in **bold** or _italic_
+  * Headings, paragraphs, and lists
+  * Automatic links to other wiki pages
